@@ -1,7 +1,8 @@
 # Project outputs
 data/
 artifacts/
-
+tmp
+.commandcode
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
