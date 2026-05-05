@@ -1,12 +1,12 @@
 # Sistema de apoyo al análisis inicial de casos ante el TEDH
 
-## Recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de deriva temporal
+## Recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de shift entre particiones
 
 Este repositorio contiene un proyecto de aprendizaje automático aplicado al derecho sobre **LexGLUE / ECtHR Task B**. Dado un caso jurídico descrito por sus hechos, el sistema sugiere artículos candidatos del Convenio Europeo de Derechos Humanos, recupera precedentes similares y genera señales de explicación y auditoría.
 
 El sistema **no predice sentencias**, no determina responsabilidad jurídica y no sustituye a jueces, abogados ni investigadores. El encuadre correcto del proyecto es:
 
-> Sistema de apoyo al análisis inicial de casos ante el TEDH: recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de deriva temporal.
+> Sistema de apoyo al análisis inicial de casos ante el TEDH: recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de shift entre particiones.
 
 ---
 
@@ -23,7 +23,7 @@ El proyecto plantea un sistema de ML clásico, reproducible y auditable que ayud
 5. auditar señales globales/locales del modelo;
 6. analizar drift temporal y patrones de error.
 
-El foco metodológico está en **explicabilidad/XAI** y **deriva temporal/drift**. La privacidad se trata como consideración de despliegue responsable, no como eje experimental principal.
+El foco metodológico está en **explicabilidad/XAI** y **shift entre particiones**. La privacidad se trata como consideración de despliegue responsable, no como eje experimental principal.
 
 ---
 
@@ -81,7 +81,7 @@ Los umbrales \(\tau_j\) se ajustan en `validation`; `test` queda reservado para 
 
 **Explicabilidad.** En derecho no basta con una etiqueta candidata: el usuario necesita auditar qué señales textuales empujan la predicción. Se usan coeficientes globales del modelo lineal y explicaciones locales LIME. Estas señales no son causalidad jurídica ni reemplazan argumentación doctrinal.
 
-**Drift temporal.** La distribución de artículos y el rendimiento pueden cambiar entre particiones. El proyecto mide divergencia Jensen-Shannon, distancia L1, similitud coseno y deltas de rendimiento respecto a validation.
+**Shift entre particiones.** La distribución de artículos y el rendimiento pueden cambiar entre `train`, `validation` y `test`. La versión de LexGLUE usada no expone un año oficial de sentencia, así que el proyecto no afirma deriva temporal estricta; mide divergencia Jensen-Shannon, distancia L1, similitud coseno y deltas de rendimiento respecto a validation.
 
 **Errores.** Los falsos negativos pueden ocultar líneas argumentales relevantes; los falsos positivos pueden añadir carga de revisión y sesgar la investigación. El análisis de errores se presenta por split y patrón FP/FN.
 
@@ -159,11 +159,10 @@ En la estructura real de esta entrega los notebooks están en la raíz del repos
 |---|---|
 | `00_diagnostico_y_decisiones.ipynb` | Ingesta, normalización, SQLite y figuras de overview. |
 | `01_datos_y_eda.ipynb` | EDA, desbalanceo, longitud, coocurrencias y Figura 3. |
-| `02_modelado_multilabel.ipynb` | TF-IDF, Logistic Regression OVR, SVM OVR, umbrales y Figura 4. |
+| `02_modelado_multilabel.ipynb` | TF-IDF, Logistic Regression OVR, SVM OVR, red neuronal SVD+MLP, umbrales y Figura 4. |
 | `03_retrieval_de_precedentes.ipynb` | Índices TF-IDF/SVD, evaluación sampled retrieval y Figura 5. |
-| `04_xai_drift_y_errores.ipynb` | XAI global/local, drift, errores y Figuras 6-7. |
-
-`05_guion_informe_y_defensa.ipynb` queda fuera del pipeline final. Su contenido útil se trasladó a este README y al informe LaTeX.
+| `04_xai_drift_y_errores.ipynb` | XAI global/local, shift entre particiones, errores y Figuras 6-7. |
+| `05_guion_informe_y_defensa.ipynb` | Comprobación de artefactos, mapa de evidencias y guion de defensa. |
 
 Pipeline final:
 
@@ -173,6 +172,7 @@ Pipeline final:
 02_modelado_multilabel.ipynb
 03_retrieval_de_precedentes.ipynb
 04_xai_drift_y_errores.ipynb
+05_guion_informe_y_defensa.ipynb
 ```
 
 ---
@@ -218,9 +218,10 @@ jupyter nbconvert --to notebook --execute 01_datos_y_eda.ipynb --inplace
 jupyter nbconvert --to notebook --execute 02_modelado_multilabel.ipynb --inplace
 jupyter nbconvert --to notebook --execute 03_retrieval_de_precedentes.ipynb --inplace
 jupyter nbconvert --to notebook --execute 04_xai_drift_y_errores.ipynb --inplace
+jupyter nbconvert --to notebook --execute 05_guion_informe_y_defensa.ipynb --inplace
 ```
 
-El notebook 02 reutiliza artefactos de modelo si existen y, en cualquier caso, regenera las predicciones en SQLite. Si faltan artefactos, entrena TF-IDF + Logistic Regression OVR y Linear SVM OVR de forma determinista con `SEED = 42`.
+El notebook 02 reutiliza artefactos de modelo si existen y, en cualquier caso, regenera las predicciones en SQLite. Si faltan artefactos, entrena TF-IDF + Logistic Regression OVR, Linear SVM OVR y una comparación neuronal ligera TF-IDF + SVD + MLP de forma determinista con `SEED = 42`.
 
 ---
 
@@ -230,20 +231,22 @@ El notebook 02 reutiliza artefactos de modelo si existen y, en cualquier caso, r
 
 | Modelo | Split | Casos | Macro-F1 | Micro-F1 | Hamming loss |
 |---|---:|---:|---:|---:|---:|
-| TF-IDF + LogReg OVR + umbrales | train | 9000 | 0.816 | 0.876 | 0.037 |
-| TF-IDF + LogReg OVR + umbrales | validation | 1000 | 0.654 | 0.758 | 0.069 |
-| TF-IDF + LogReg OVR + umbrales | test | 1000 | 0.672 | 0.737 | 0.076 |
+| TF-IDF + LogReg OVR + umbrales | train | 9000 | 0.877 | 0.905 | 0.028 |
+| TF-IDF + LogReg OVR + umbrales | validation | 1000 | 0.740 | 0.774 | 0.062 |
+| TF-IDF + LogReg OVR + umbrales | test | 1000 | 0.714 | 0.752 | 0.069 |
+| TF-IDF + SVD + MLP + umbrales | validation | 1000 | 0.736 | 0.782 | 0.061 |
+| TF-IDF + SVD + MLP + umbrales | test | 1000 | 0.729 | 0.770 | 0.065 |
 
-La tabla completa está en `artifacts/metrics/paper_classification_table.csv`. También se genera `classification_model_comparison.csv` con baseline, Logistic 0.5, SVM 0.5 y Logistic con umbrales ajustados.
+La tabla completa está en `artifacts/metrics/paper_classification_table.csv`. También se genera `classification_model_comparison.csv` con baseline, Logistic 0.5, SVM lineal, Logistic con umbrales ajustados y MLP ligero.
 
 ### Retrieval de precedentes
 
 | Método | Split | Consultas | nDCG@10 | Recall@5 | Recall@10 |
 |---|---:|---:|---:|---:|---:|
-| TF-IDF coseno sampled | validation | 250 | 0.883 | 0.948 | 0.964 |
-| TF-IDF coseno sampled | test | 250 | 0.868 | 0.940 | 0.968 |
-| TF-IDF + SVD coseno sampled | validation | 250 | 0.892 | 0.956 | 0.960 |
-| TF-IDF + SVD coseno sampled | test | 250 | 0.870 | 0.928 | 0.956 |
+| TF-IDF coseno sampled | validation | 250 | 0.882 | 0.952 | 0.964 |
+| TF-IDF coseno sampled | test | 250 | 0.867 | 0.944 | 0.972 |
+| TF-IDF + SVD coseno sampled | validation | 250 | 0.899 | 0.964 | 0.964 |
+| TF-IDF + SVD coseno sampled | test | 250 | 0.877 | 0.940 | 0.956 |
 
 Advertencia: retrieval se evalúa sobre una muestra reproducible de 250 consultas por split y un índice construido sobre 2500 casos de train.
 
@@ -251,14 +254,14 @@ Advertencia: retrieval se evalúa sobre una muestra reproducible de 250 consulta
 
 | n etiquetas globales | n explicaciones locales | peso global medio absoluto | probabilidad local positiva media |
 |---:|---:|---:|---:|
-| 10 | 5 | 1.372 | 0.736 |
+| 10 | 5 | 1.832 | 0.787 |
 
-### Drift
+### Shift entre particiones
 
 | Split objetivo | JS divergence | L1 | Cosine similarity | Δ macro-F1 | Δ micro-F1 | Δ Hamming |
 |---|---:|---:|---:|---:|---:|---:|
 | validation | 0.017 | 0.278 | 0.959 | 0.000 | 0.000 | 0.000 |
-| test | 0.026 | 0.320 | 0.951 | +0.018 | -0.022 | +0.007 |
+| test | 0.026 | 0.320 | 0.951 | -0.026 | -0.023 | +0.007 |
 
 ### Patrones de error en test
 
@@ -275,9 +278,9 @@ Promedios de error:
 
 | Split | TP | FP | FN | Errores |
 |---|---:|---:|---:|---:|
-| train | 1.325 | 0.237 | 0.138 | 0.374 |
-| validation | 1.075 | 0.369 | 0.316 | 0.685 |
-| test | 1.058 | 0.379 | 0.377 | 0.756 |
+| train | 1.358 | 0.180 | 0.105 | 0.285 |
+| validation | 1.057 | 0.282 | 0.334 | 0.616 |
+| test | 1.045 | 0.300 | 0.390 | 0.690 |
 
 ---
 
@@ -313,9 +316,9 @@ Modelos e índices:
 artifacts/models/notebook_tfidf_vectorizer.joblib
 artifacts/models/notebook_logreg_ovr.joblib
 artifacts/models/notebook_svm_ovr.joblib
+artifacts/models/notebook_svd_mlp.joblib
 artifacts/models/notebook_thresholds.json
-artifacts/indices/notebook_retrieval_tfidf_index.joblib
-artifacts/indices/notebook_retrieval_dense_index.joblib
+artifacts/indices/notebook_retrieval_tfidf_svd_index.joblib
 ```
 
 Ilustraciones conceptuales generadas:
@@ -326,6 +329,12 @@ artifacts/figures/generated/generated_02_state_transition.png
 artifacts/figures/generated/generated_03_false_positive_negative.png
 artifacts/figures/generated/generated_04_temporal_drift.png
 artifacts/figures/generated/generated_05_visual_abstract.png
+artifacts/figures/generated/notebook_00_ingestion_schema.png
+artifacts/figures/generated/notebook_01_eda.png
+artifacts/figures/generated/notebook_02_modeling.png
+artifacts/figures/generated/notebook_03_retrieval.png
+artifacts/figures/generated/notebook_04_audit.png
+artifacts/figures/generated/notebook_05_evidence.png
 artifacts/figures/generated/imagegen_prompts.md
 ```
 

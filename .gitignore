@@ -1,6 +1,6 @@
 # Project outputs
 data/
-artifacts/
+
 tmp
 .commandcode
 # Python bytecode and caches
