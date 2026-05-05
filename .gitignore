@@ -1,5 +1,13 @@
 # Project outputs
 data/
+artifacts/
+!artifacts/
+artifacts/*
+!artifacts/figures/
+artifacts/figures/*
+!artifacts/figures/generated/
+artifacts/figures/generated/*
+!artifacts/figures/generated/notebook_*.png
 
 tmp
 .commandcode
