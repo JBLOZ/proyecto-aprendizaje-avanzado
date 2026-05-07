@@ -2,9 +2,8 @@
 
 Este archivo contiene solo codigo reutilizado por varios notebooks: rutas del
 proyecto, ingesta/carga de SQLite, construccion de la matriz multietiqueta,
-metricas comunes, ajuste de umbrales, persistencia de predicciones y pequenos
-helpers matematicos. El entrenamiento de modelos, retrieval, XAI y graficas
-especificas viven en sus notebooks correspondientes.
+metricas comunes y pequenos helpers matematicos. El entrenamiento de modelos,
+retrieval, XAI y graficas especificas viven en sus notebooks correspondientes.
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ import random
 import re
 import sqlite3
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
@@ -111,19 +109,53 @@ def connect_db() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Recrea la estructura SQLite a partir de `schema.sql`.
-
-    Entrada:
-        Ninguna. Lee el archivo global `SCHEMA`.
-
-    Salida:
-        No devuelve nada. Ejecuta el SQL del esquema sobre `metadata.db`.
-    """
+    """Recrea la estructura SQLite a partir de `schema.sql`."""
 
     configure()
     with connect_db() as conn:
         conn.executescript(SCHEMA.read_text(encoding="utf-8"))
         conn.commit()
+
+
+def normalize_paragraphs(record: dict) -> list[str]:
+    """Extrae y limpia los parrafos de un registro de LexGLUE."""
+
+    value = record.get("text") or record.get("facts") or record.get("document") or ""
+    if isinstance(value, str):
+        paragraphs = [value]
+    elif isinstance(value, Iterable):
+        paragraphs = []
+        for item in value:
+            if isinstance(item, str):
+                paragraphs.append(item)
+            elif isinstance(item, Iterable):
+                paragraphs.append(" ".join(str(x) for x in item))
+            else:
+                paragraphs.append(str(item))
+    else:
+        paragraphs = [str(value)]
+    return [p.strip() for p in paragraphs if str(p).strip()]
+
+
+def extract_year_from_record(record: dict) -> int | None:
+    """Extrae el anio oficial si el dataset lo proporciona."""
+
+    for key in ["year", "judgment_year", "decision_year"]:
+        value = record.get(key)
+        if isinstance(value, (int, np.integer)) and 1950 <= int(value) <= 2035:
+            return int(value)
+    return None
+
+
+def load_lexglue_dataset():
+    """Carga LexGLUE ECtHR Task B usando el cache local del repositorio."""
+
+    from datasets import load_dataset
+
+    configure()
+    return load_dataset(DATASET_NAME, DATASET_SUBSET, cache_dir=str(RAW / "hf_cache"))
+
+
 
 
 def database_ready() -> bool:
@@ -149,68 +181,6 @@ def database_ready() -> bool:
         return False
 
 
-def normalize_paragraphs(record: dict) -> list[str]:
-    """Extrae y limpia los parrafos de un registro de LexGLUE.
-
-    Entrada:
-        record: diccionario de Hugging Face con un caso del dataset.
-
-    Salida:
-        Lista de parrafos no vacios. En ECtHR Task B normalmente vienen en
-        `text`, pero se contemplan variantes para que la ingesta sea robusta.
-    """
-
-    value = record.get("text") or record.get("facts") or record.get("document") or ""
-    if isinstance(value, str):
-        paragraphs = [value]
-    elif isinstance(value, Iterable):
-        paragraphs = []
-        for item in value:
-            if isinstance(item, str):
-                paragraphs.append(item)
-            elif isinstance(item, Iterable):
-                paragraphs.append(" ".join(str(x) for x in item))
-            else:
-                paragraphs.append(str(item))
-    else:
-        paragraphs = [str(value)]
-    return [p.strip() for p in paragraphs if str(p).strip()]
-
-
-def extract_year_from_record(record: dict) -> int | None:
-    """Extrae el anio oficial si el dataset lo proporciona.
-
-    Entrada:
-        record: diccionario de Hugging Face con metadatos del caso.
-
-    Salida:
-        Entero con el anio si existe una columna oficial compatible; `None` si
-        no existe. No se infieren fechas desde el texto porque podrian referirse
-        a hechos del caso y no a la sentencia.
-    """
-
-    for key in ["year", "judgment_year", "decision_year"]:
-        value = record.get(key)
-        if isinstance(value, (int, np.integer)) and 1950 <= int(value) <= 2035:
-            return int(value)
-    return None
-
-
-def load_lexglue_dataset():
-    """Carga LexGLUE ECtHR Task B usando el cache local del repositorio.
-
-    Entrada:
-        Ninguna.
-
-    Salida:
-        Objeto `DatasetDict` de Hugging Face con splits `train`,
-        `validation` y `test`.
-    """
-
-    from datasets import load_dataset
-
-    configure()
-    return load_dataset(DATASET_NAME, DATASET_SUBSET, cache_dir=str(RAW / "hf_cache"))
 
 
 def materialize_database(force: bool = False) -> dict:
@@ -270,7 +240,11 @@ def materialize_database(force: bool = False) -> dict:
         conn.commit()
 
     status = database_status()
-    save_json(REPORTS / "ingestion_status.json", status)
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    (REPORTS / "ingestion_status.json").write_text(
+        json.dumps(status, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     return status
 
 
@@ -403,9 +377,8 @@ def summarize_case(case_id: str, max_chars: int = 900) -> dict:
     return case
 
 
-def real_example_cases() -> dict[str, pd.DataFrame]:
-    """Devuelve conjuntos de ejemplos reales para explicaciones didacticas.
-
+def example_cases() -> dict[str, pd.DataFrame]:
+    """Devuelve conjuntos de ejemplos reales.
     Entrada:
         Ninguna.
 
@@ -484,34 +457,6 @@ def metric_table(y_true: np.ndarray, y_pred: np.ndarray, split: str, model: str)
         "hamming_loss": float(hamming_loss(y_true, y_pred)),
     }
 
-
-def tune_thresholds(y_true: np.ndarray, scores: np.ndarray, grid: Iterable[float] | None = None) -> np.ndarray:
-    """Ajusta un umbral de decision por articulo usando F1 en validacion.
-
-    Entrada:
-        y_true: matriz binaria real de validacion.
-        scores: matriz de scores/probabilidades por articulo.
-        grid: valores candidatos de umbral. Si es `None`, usa 0.10..0.90.
-
-    Salida:
-        Vector `tau` con un umbral por columna/articulo.
-    """
-
-    from sklearn.metrics import f1_score
-
-    if grid is None:
-        grid = np.arange(0.10, 0.91, 0.05)
-    thresholds = []
-    for col in range(y_true.shape[1]):
-        best_threshold, best_f1 = 0.5, -1.0
-        for threshold in grid:
-            score = f1_score(y_true[:, col], (scores[:, col] >= threshold).astype(int), zero_division=0)
-            if score > best_f1:
-                best_threshold, best_f1 = float(threshold), score
-        thresholds.append(best_threshold)
-    return np.array(thresholds, dtype=float)
-
-
 def as_probability_matrix(raw) -> np.ndarray:
     """Normaliza salidas de probabilidad de sklearn.
 
@@ -531,73 +476,6 @@ def as_probability_matrix(raw) -> np.ndarray:
             columns.append(arr[:, 1] if arr.ndim == 2 and arr.shape[1] > 1 else arr.ravel())
         return np.vstack(columns).T
     return np.asarray(raw)
-
-
-def save_run_and_predictions(
-    run_id: str,
-    model_name: str,
-    config: dict,
-    metrics: list[dict],
-    case_ids: list[str],
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    scores: np.ndarray | None,
-) -> None:
-    """Guarda una ejecucion experimental y sus predicciones en SQLite.
-
-    Entrada:
-        run_id: identificador estable de la ejecucion.
-        model_name: nombre legible del modelo.
-        config: configuracion serializable del experimento.
-        metrics: lista de metricas agregadas.
-        case_ids: casos evaluados en el mismo orden que las matrices.
-        y_true: matriz real.
-        y_pred: matriz predicha.
-        scores: matriz de scores, o `None` si el modelo no los produce.
-
-    Salida:
-        No devuelve nada. Escribe en `experiment_runs` y `predictions`.
-    """
-
-    with connect_db() as conn:
-        conn.execute("DELETE FROM predictions WHERE run_id = ?", [run_id])
-        conn.execute("DELETE FROM experiment_runs WHERE run_id = ?", [run_id])
-        conn.execute(
-            """
-            INSERT INTO experiment_runs(run_id, stage, model_name, config_json, metrics_json, created_at, git_commit)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                run_id,
-                "classification_notebook",
-                model_name,
-                json.dumps(config, sort_keys=True),
-                json.dumps(metrics, sort_keys=True),
-                datetime.now(timezone.utc).isoformat(),
-                git_commit(),
-            ),
-        )
-        rows = []
-        for idx, case_id in enumerate(case_ids):
-            score_payload = None if scores is None else json.dumps([float(x) for x in scores[idx]])
-            rows.append(
-                (
-                    run_id,
-                    case_id,
-                    json.dumps([int(x) for x in y_true[idx]]),
-                    json.dumps([int(x) for x in y_pred[idx]]),
-                    score_payload,
-                )
-            )
-        conn.executemany(
-            """
-            INSERT INTO predictions(run_id, case_id, y_true_json, y_pred_json, scores_json)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        conn.commit()
-
 
 def load_predictions(run_id: str = "notebook_threshold_tuned") -> pd.DataFrame:
     """Carga predicciones guardadas en SQLite y decodifica sus JSON.
@@ -653,73 +531,5 @@ def js_divergence(p: np.ndarray, q: np.ndarray) -> float:
         return float(np.sum(a[mask] * np.log2(a[mask] / b[mask])))
 
     return 0.5 * kl(p, m) + 0.5 * kl(q, m)
-
-
-def ndcg_at_k(relevances: Iterable[int], k: int = 10) -> float:
-    """Calcula nDCG@k para una secuencia binaria de relevancias.
-
-    Entrada:
-        relevances: lista donde 1 significa resultado relevante.
-        k: profundidad del ranking evaluada.
-
-    Salida:
-        nDCG@k entre 0 y 1. Premia que los relevantes aparezcan arriba.
-    """
-
-    rel = np.asarray(list(relevances)[:k], dtype=float)
-    if rel.size == 0:
-        return 0.0
-    discounts = 1.0 / np.log2(np.arange(2, rel.size + 2))
-    dcg = float(np.sum(rel * discounts))
-    ideal = np.sort(rel)[::-1]
-    idcg = float(np.sum(ideal * discounts))
-    return dcg / idcg if idcg else 0.0
-
-
-def recall_at_k(relevances: Iterable[int], k: int = 10) -> float:
-    """Indica si aparece algun resultado relevante en el top-k.
-
-    Entrada:
-        relevances: lista binaria de relevancias ordenadas por ranking.
-        k: profundidad evaluada.
-
-    Salida:
-        `1.0` si hay al menos un relevante en las primeras `k` posiciones;
-        `0.0` en caso contrario.
-    """
-
-    return float(any(list(relevances)[:k]))
-
-
-def safe_artifact_load(path: Path):
-    """Carga un artefacto joblib de forma tolerante.
-
-    Entrada:
-        path: ruta del archivo `.joblib`.
-
-    Salida:
-        Objeto cargado, o `None` si falta el archivo o no puede leerse.
-    """
-
-    try:
-        return joblib.load(path)
-    except Exception:
-        return None
-
-
-def save_json(path: Path, payload: dict | list) -> None:
-    """Escribe JSON con formato estable y codificacion UTF-8.
-
-    Entrada:
-        path: ruta destino.
-        payload: diccionario o lista serializable.
-
-    Salida:
-        No devuelve nada. Crea carpetas padre si faltan.
-    """
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
 
 configure()
