@@ -26,7 +26,7 @@
 \graphicspath{{artifacts/figures/}{artifacts/figures/generated/}}
 
 \title{\textbf{Sistema de apoyo al análisis inicial de casos ante el TEDH:}\\
-\large recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de deriva temporal}
+\large recuperación de precedentes y predicción explicable de artículos jurídicos con análisis de shift entre particiones}
 
 \author{
     Jordi Blasco Lozano\\
@@ -41,51 +41,51 @@
 \maketitle
 
 \begin{abstract}
-Este trabajo estudia ECtHR Task B de LexGLUE como un problema de apoyo al análisis inicial de casos ante el Tribunal Europeo de Derechos Humanos. Dado un caso descrito por sus hechos, el sistema propuesto sugiere artículos candidatos del Convenio Europeo de Derechos Humanos, recupera precedentes similares y proporciona señales de auditoría sobre sus predicciones. El objetivo no es automatizar decisiones judiciales ni predecir sentencias, sino priorizar hipótesis de trabajo revisables por un analista jurídico. El dataset contiene 11000 casos, divididos en 9000 de entrenamiento, 1000 de validación y 1000 de test, con 10 artículos, 15991 pares positivos caso-artículo y 262580 párrafos almacenados. La metodología combina una base SQLite trazable, representación TF-IDF con unigramas y bigramas, clasificación One-vs-Rest, ajuste de umbrales por etiqueta, recuperación de precedentes mediante similitud coseno y análisis de explicabilidad global/local. Los resultados en test alcanzan macro-F1 de 0.672, micro-F1 de 0.737 y Hamming loss de 0.076. En retrieval, la variante TF-IDF obtiene Recall@10 de 0.968 sobre una muestra reproducible de 250 consultas. Finalmente, se analiza deriva de etiquetas y patrones de error, destacando las implicaciones prácticas de falsos negativos, falsos positivos, anclaje por precedentes y límites de las explicaciones basadas en términos.
+Este trabajo estudia LexGLUE / ECtHR Task B como un problema de apoyo al análisis inicial de casos ante el Tribunal Europeo de Derechos Humanos. Dado el texto de los hechos de un caso, el sistema sugiere artículos candidatos del Convenio Europeo de Derechos Humanos, recupera precedentes similares y proporciona señales de auditoría sobre las predicciones. El objetivo no es automatizar decisiones judiciales, sino priorizar hipótesis revisables por un analista jurídico. El dataset contiene 11000 casos, 262580 párrafos, 10 artículos y 15991 pares positivos caso-artículo; la partición oficial consta de 9000 casos de entrenamiento, 1000 de validación y 1000 de test. La metodología materializa los datos en SQLite, analiza desbalanceo y coocurrencias, representa los textos con TF-IDF, entrena clasificadores lineales One-vs-Rest, ajusta umbrales por etiqueta, recupera precedentes mediante similitud coseno y audita el sistema con pesos globales, LIME, errores FP/FN y shift de etiquetas. El modelo principal TF-IDF + regresión logística OVR alcanza en test macro-F1 de 0.672, micro-F1 de 0.736 y Hamming loss de 0.075. En retrieval, TF-IDF + coseno obtiene Recall@10 de 0.968 en una evaluación muestral reproducible. Los resultados muestran utilidad como herramienta de priorización, pero requieren supervisión humana, interpretación jurídica y control de errores.
 \end{abstract}
 
-\noindent\textbf{Palabras clave:} NLP jurídico, clasificación multietiqueta, LexGLUE, ECtHR, explicabilidad, drift temporal, recuperación de precedentes.
+\noindent\textbf{Palabras clave:} NLP jurídico, LexGLUE, ECtHR, clasificación multietiqueta, recuperación de precedentes, explicabilidad, shift de datos.
 
 \tableofcontents
 \newpage
 
 \section{Introducción}
 
-El análisis de jurisprudencia del Tribunal Europeo de Derechos Humanos (TEDH) exige leer documentos extensos, identificar artículos potencialmente implicados y localizar precedentes relevantes. En una fase inicial de estudio de un caso, un abogado, investigador o analista jurídico no necesita una ``decisión automática'', sino una priorización razonable de líneas de investigación: qué artículos revisar, qué casos previos pueden ser comparables y qué señales textuales han llevado al sistema a sugerir una hipótesis.
+El análisis de jurisprudencia del Tribunal Europeo de Derechos Humanos (TEDH) exige leer documentos extensos, identificar artículos potencialmente implicados y localizar precedentes relevantes. En una fase inicial de estudio, un abogado, investigador o analista jurídico no necesita una decisión automática, sino una priorización razonable de líneas de revisión: qué artículos mirar primero, qué casos previos pueden ser comparables y qué señales textuales han empujado al sistema hacia una hipótesis.
 
-Este trabajo aborda ese escenario mediante aprendizaje automático aplicado a ECtHR Task B de LexGLUE. La tarea se formula como clasificación multietiqueta de artículos del Convenio Europeo de Derechos Humanos a partir de los hechos del caso. A diferencia del encuadre de predicción de sentencias, el sistema se presenta como apoyo al \textit{issue spotting} jurídico y a la recuperación de precedentes. Esta distinción es central: una predicción de artículo no es razonamiento jurídico, no resuelve el caso y no debe utilizarse sin supervisión humana.
+Este proyecto aborda ese escenario mediante aprendizaje automático aplicado a ECtHR Task B de LexGLUE. La tarea se formula como clasificación multietiqueta de artículos del Convenio Europeo de Derechos Humanos a partir de los hechos del caso. El encuadre es deliberadamente conservador: una predicción de artículo no es razonamiento jurídico, no resuelve el fondo del caso y no debe utilizarse sin revisión humana.
 
-El proyecto se centra en dos problemáticas propias de sistemas de aprendizaje automático en dominios reales. La primera es la explicabilidad: en derecho, una sugerencia opaca tiene valor limitado y puede inducir confianza indebida. La segunda es la deriva temporal: la distribución de casos, artículos y vocabulario puede cambiar con el tiempo, y esos cambios pueden reflejar evolución jurisprudencial, cambios en litigación o sesgos de muestreo. La privacidad se discute como requisito de despliegue responsable, pero no constituye el eje experimental porque el benchmark utilizado es público.
+El trabajo se centra en problemáticas propias de sistemas de ML en dominios reales. La primera es la explicabilidad: en derecho, una etiqueta opaca puede inducir confianza indebida. La segunda es el shift entre particiones: aunque el benchmark no expone un año oficial de sentencia en los registros utilizados, sí permite comparar distribuciones de etiquetas y rendimiento entre train, validation y test. La tercera es el análisis de errores: falsos negativos y falsos positivos tienen costes distintos en una tarea de apoyo jurídico. La privacidad se discute como requisito de despliegue responsable porque un sistema real podría procesar expedientes sensibles.
 
-La contribución del trabajo es un pipeline reproducible que combina ingesta en SQLite, EDA, modelado multietiqueta con TF-IDF y One-vs-Rest, ajuste de umbrales, recuperación de precedentes, explicaciones globales/locales y análisis de drift y errores. La Figura~\ref{fig:overview} resume el sistema completo.
+La contribución principal es un pipeline reproducible que conecta ingesta en SQLite, EDA, modelado multietiqueta, recuperación de precedentes, XAI y análisis crítico de errores. La Figura~\ref{fig:overview} resume el mapa de artefactos y evidencias producido por los notebooks.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.94\textwidth]{fig01_system_overview.pdf}
-\caption{Overview del sistema. El flujo transforma un caso jurídico bruto en artículos candidatos, precedentes recuperados y señales de auditoría. El sistema apoya al analista jurídico y no decide sentencias.}
+\includegraphics[width=0.95\textwidth]{notebook_05_evidence_v2.png}
+\caption{Mapa de evidencias del proyecto: notebooks, base SQLite, métricas, modelos, figuras, limitaciones y material de defensa.}
 \label{fig:overview}
 \end{figure}
 
 \section{Trabajo relacionado}
 \label{sec:related}
 
-\subsection{Benchmarks y modelos de NLP jurídico}
+\subsection{Benchmarks de lenguaje jurídico}
 
-LexGLUE propone un conjunto de tareas para evaluar comprensión de lenguaje jurídico en diferentes dominios, incluyendo casos del TEDH~\cite{chalkidis2022lexglue}. Este tipo de benchmark permite comparar modelos, pero también obliga a interpretar con cuidado qué significa cada tarea. ECtHR Task B no requiere decidir el resultado final de un proceso, sino identificar artículos asociados a los hechos. Por ello, en este trabajo se evita el marco de ``predicción automática de sentencias'' y se usa una formulación de apoyo al análisis inicial.
+LexGLUE propone tareas para evaluar comprensión de lenguaje jurídico en distintos dominios, incluyendo casos del TEDH~\cite{chalkidis2022lexglue}. En ECtHR Task B, el objetivo es identificar artículos asociados a los hechos del caso. Esta formulación permite estudiar clasificación jurídica multietiqueta, pero requiere cuidado interpretativo: detectar artículos probables no equivale a predecir una sentencia ni a razonar jurídicamente.
 
-La literatura sobre modelos jurídicos contextualizados, como LEGAL-BERT~\cite{chalkidis2020legalbert}, muestra que adaptar representaciones al dominio legal puede mejorar tareas de clasificación. Sin embargo, el objetivo aquí no es maximizar rendimiento con arquitecturas grandes, sino construir un sistema reproducible, auditable y fácil de discutir. TF-IDF y modelos lineales siguen siendo útiles como línea base fuerte cuando se necesita inspeccionar pesos, umbrales y errores.
+Los modelos jurídicos contextualizados, como LEGAL-BERT~\cite{chalkidis2020legalbert}, muestran que adaptar representaciones al dominio legal puede mejorar tareas de clasificación. En este trabajo se prioriza una línea base clásica y auditable: TF-IDF con modelos lineales. Esta elección facilita inspeccionar pesos, umbrales, errores y ejemplos, aspectos valiosos en un contexto académico centrado en problemáticas reales de ML.
 
-\subsection{Predicción jurídica y alcance del problema}
+\subsection{Predicción jurídica y apoyo a la revisión}
 
-El trabajo de Aletras et al.~\cite{aletras2016predicting} popularizó la predicción de decisiones del TEDH mediante análisis textual. Esa línea ha sido influyente, pero también discutida por el riesgo de confundir correlaciones textuales con razonamiento legal. En este proyecto se adopta una posición más conservadora: el modelo no predice sentencias ni sustituye interpretación jurídica, sino que sugiere artículos candidatos y casos similares para acelerar una revisión humana.
+Aletras et al.~\cite{aletras2016predicting} popularizaron la predicción de decisiones del TEDH desde texto. Esa línea de trabajo es influyente, pero también evidencia el riesgo de confundir correlaciones textuales con justificación legal. Por ello, aquí se adopta el marco de \textit{issue spotting}: el sistema ayuda a encontrar artículos y precedentes candidatos, pero la interpretación normativa permanece en manos humanas.
 
-La recuperación de precedentes se relaciona con sistemas de búsqueda jurídica y \textit{case-based reasoning}. En esta entrega se usa una definición operacional de relevancia: un precedente recuperado es relevante si comparte al menos un artículo verdadero con la consulta. Esta aproximación es reproducible y barata, pero no equivale a una evaluación experta de similitud doctrinal.
+La recuperación de precedentes se relaciona con búsqueda jurídica y razonamiento basado en casos. En este proyecto la relevancia se define operacionalmente: un precedente recuperado se considera relevante si comparte al menos un artículo verdadero con la consulta. Es una métrica reproducible para evaluar rankings, aunque no sustituye una valoración doctrinal experta.
 
-\subsection{Explicabilidad y deriva}
+\subsection{XAI y shift de datos}
 
-LIME~\cite{ribeiro2016lime} explica predicciones locales perturbando entradas y ajustando un modelo interpretable alrededor del caso. En modelos lineales también pueden inspeccionarse coeficientes globales. Ambas estrategias son útiles para auditoría, pero no deben interpretarse como causalidad jurídica: un término puede correlacionar con un artículo sin representar por sí mismo una razón normativa.
+LIME explica predicciones locales perturbando entradas y ajustando un modelo interpretable alrededor del ejemplo~\cite{ribeiro2016lime}. En modelos lineales también pueden inspeccionarse coeficientes globales por clase. Ambas estrategias son útiles para auditoría, pero no deben interpretarse como causalidad jurídica: un término puede correlacionar con un artículo sin ser, por sí solo, una razón normativa.
 
-La deriva de datos y de concepto es una preocupación clásica en aprendizaje automático real. Gama et al.~\cite{gama2014survey} revisan adaptación ante \textit{concept drift}, mientras que Moreno-Torres et al.~\cite{moreno2012datasetshift} sistematizan tipos de cambio de distribución. En derecho, el drift puede ser especialmente ambiguo: puede indicar degradación estadística, pero también evolución jurisprudencial o cambios en el tipo de litigios. Como inspiración visual para representar fallos y estados del sistema se tuvo en cuenta el estilo de análisis de fallos de \textit{The Illusion of Thinking}~\cite{shojaee2025illusion}, sin usarlo como fundamento jurídico.
+El shift de datos y el concept drift son preocupaciones habituales en sistemas desplegados. Gama et al.~\cite{gama2014survey} revisan adaptación ante \textit{concept drift}, mientras Moreno-Torres et al.~\cite{moreno2012datasetshift} sistematizan tipos de cambio de distribución. En derecho, un cambio de distribución puede deberse a evolución jurisprudencial, cambios de litigación, sesgos de muestreo o diferencias entre particiones. Por ello, se analiza con métricas cuantitativas, pero se interpreta de forma prudente.
 
 \section{Descripción del problema y los datos}
 \label{sec:datos}
@@ -96,23 +96,23 @@ Dado un conjunto de casos \(D=\{(x_i,y_i)\}_{i=1}^{n}\), cada entrada \(x_i\) es
 \[
 y_i \in \{0,1\}^{K}, \qquad K=10,
 \]
-donde cada dimensión representa un artículo del Convenio. El objetivo es aprender una función:
+donde cada dimensión representa un artículo del Convenio. El sistema aprende una función:
 \[
 f: \mathcal{X} \rightarrow [0,1]^K
 \]
-que asigne un score por artículo. La decisión final se obtiene con umbrales por etiqueta:
+que devuelve un score por artículo. La decisión final aplica umbrales específicos por etiqueta:
 \[
 \hat{y}_{ij} = \mathbb{1}(f_j(x_i) \geq \tau_j).
 \]
-El ajuste de \(\tau_j\) se realiza en validación para mejorar el equilibrio por etiqueta. La partición de test se reserva para evaluación final.
+Los umbrales \(\tau_j\) se ajustan en validation; test queda reservado para evaluación final.
 
 \subsection{Dataset}
 
-El dataset usado es LexGLUE / ECtHR Task B. Tras la ingesta completa, se materializa en SQLite con 11000 casos y 262580 párrafos. La Tabla~\ref{tab:dataset} resume sus características.
+Se usa LexGLUE / ECtHR Task B. La ingesta materializa el benchmark en SQLite y conserva casos, párrafos, catálogo de artículos, etiquetas, predicciones y explicaciones. La Tabla~\ref{tab:dataset} resume sus características principales.
 
 \begin{table}[H]
 \centering
-\caption{Características principales del dataset ECtHR Task B utilizado.}
+\caption{Características principales del dataset utilizado.}
 \label{tab:dataset}
 \small
 \begin{tabular}{@{}lr@{}}
@@ -125,77 +125,102 @@ Casos de test & 1000\\
 Casos totales & 11000\\
 Artículos / etiquetas & 10\\
 Pares positivos caso-artículo & 15991\\
+Media de artículos por caso & 1.454\\
 Media de artículos por caso etiquetado & 1.477\\
 Máximo de artículos en un caso & 7\\
 Párrafos almacenados & 262580\\
+Casos sin año oficial en los registros usados & 11000\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Las etiquetas son los artículos \(2,3,5,6,8,9,10,11,14\) y \(P1\)-\(1\). La tarea es multietiqueta: un mismo caso puede activar varios artículos. Además, hay fuerte desbalanceo; algunos artículos aparecen en miles de casos y otros son minoritarios.
+Las etiquetas son los artículos \(2,3,5,6,8,9,10,11,14\) y \(P1\)-\(1\). El artículo 6 es el más frecuente, con 6225 casos; el artículo 9 es el menos frecuente, con 101 casos. Esta diferencia produce un ratio de desbalanceo máximo-mínimo superior a 61, por lo que macro-F1 es necesaria para no ocultar el rendimiento en etiquetas minoritarias.
+
+\subsection{Ingesta y esquema relacional}
+
+La Figura~\ref{fig:ingesta} muestra la estructura de ingesta. Cada registro se normaliza en texto completo y párrafos, se vincula con etiquetas positivas y se almacena en \path{data/interim/metadata.db}. El esquema separa \texttt{cases}, \texttt{case\_paragraphs}, \texttt{articles}, \texttt{case\_labels}, \texttt{experiment\_runs}, \texttt{predictions} y \texttt{explanations}. Esta separación permite que una predicción pueda trazarse hasta su caso, split, scores y configuración experimental.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{notebook_00_ingestion_schema_v2.png}
+\caption{Ingesta reproducible: casos, párrafos, etiquetas, SQLite y comprobaciones de integridad.}
+\label{fig:ingesta}
+\end{figure}
 
 \subsection{Análisis exploratorio}
 
-La Figura~\ref{fig:eda} sintetiza el EDA. El split de entrenamiento domina en tamaño, los documentos tienen longitudes muy variables y la frecuencia de artículos muestra una cola larga. La matriz de coocurrencia confirma que ciertos artículos aparecen juntos con frecuencia, por lo que el sistema debe permitir múltiples etiquetas simultáneas. Esta evidencia justifica usar macro-F1 junto a micro-F1: micro-F1 resume rendimiento agregado, mientras que macro-F1 penaliza peor el bajo rendimiento en etiquetas raras.
+El EDA confirma cuatro propiedades relevantes. Primero, el dataset está muy concentrado en train por diseño del benchmark. Segundo, los documentos son largos y muy variables: en test la media es 1967 tokens y en train el máximo alcanza 35780 tokens. Tercero, las etiquetas están desbalanceadas. Cuarto, existen coocurrencias fuertes entre artículos, como artículo 6 con \(P1\)-\(1\) en 1290 casos, artículo 3 con artículo 5 en 797 casos y artículo 5 con artículo 6 en 570 casos.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{fig03_eda_multipanel.pdf}
-\caption{EDA multipanel. El dataset combina texto largo, desbalanceo, coocurrencias entre artículos y naturaleza multietiqueta.}
+\includegraphics[width=0.95\textwidth]{notebook_01_eda_v2.png}
+\caption{EDA del dataset: splits, longitud de documentos, frecuencia de artículos y coocurrencias.}
 \label{fig:eda}
 \end{figure}
 
-\subsection{Estructura de datos}
-
-El pipeline almacena el dataset en \path{data/interim/metadata.db}. Las tablas principales son \texttt{cases}, \texttt{case\_paragraphs}, \texttt{articles}, \texttt{case\_labels}, \texttt{predictions}, \texttt{experiment\_runs} y \texttt{explanations}. Esta estructura separa texto, párrafos, etiquetas, predicciones y metadatos de ejecución. La separación facilita auditoría: una predicción puede vincularse al caso, al modelo, a sus scores y a la configuración experimental.
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.96\textwidth]{fig02_state_transition_pipeline.pdf}
-\caption{Estados del flujo. Esquema compacto generado desde notebook: la entrada textual se transforma en representación estructurada, scores de modelo y salida jurídica revisable.}
-\label{fig:states}
-\end{figure}
+La naturaleza multietiqueta descarta una formulación multiclase simple. Un mismo caso puede activar varios artículos y también existen 175 casos sin etiquetas positivas en la matriz materializada, lo que obliga a tratar explícitamente predicciones vacías, densidad de etiquetas y métricas adaptadas a multilabel.
 
 \section{Metodología}
 \label{sec:metodologia}
 
-\subsection{Representación y clasificación}
+\subsection{Representación \(X\) y matriz multietiqueta \(Y\)}
 
-La representación principal es TF-IDF con unigramas y bigramas, \texttt{min\_df=2}, \texttt{max\_df=0.95}, \texttt{sublinear\_tf=True} y un máximo de 60000 características. El vectorizador se ajusta únicamente sobre \texttt{train} para evitar fuga de información. Con la matriz \(X\) y la matriz binaria \(Y\), se entrenan modelos One-vs-Rest: Logistic Regression como modelo principal y Linear SVM como comparación suplementaria.
+El texto de cada caso se transforma en una matriz \(X\) mediante TF-IDF con unigramas y bigramas. La configuración usada en el modelo principal es \texttt{min\_df=2}, \texttt{max\_df=0.95}, \texttt{sublinear\_tf=True} y un máximo de 60000 características. El vectorizador se ajusta únicamente sobre train para evitar fuga de información y después transforma validation y test.
 
-El modelo principal usa scores probabilísticos de regresión logística y umbrales específicos por etiqueta ajustados en validación. Esta decisión responde al desbalanceo: un umbral global de 0.5 puede ser demasiado conservador para artículos poco frecuentes o demasiado permisivo para etiquetas dominantes.
+En paralelo se construye una matriz binaria \(Y\) de tamaño \(11000 \times 10\), donde las filas son casos y las columnas artículos. La Figura~\ref{fig:xy} resume la correspondencia entre matriz textual, matriz de etiquetas, scores y predicción final.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.96\textwidth]{fig04_modeling_and_thresholds.pdf}
-\caption{Modelado multietiqueta. Se muestran el pipeline TF-IDF + OVR, las métricas principales por split, la distribución de scores por artículo y los umbrales ajustados.}
-\label{fig:modeling}
+\includegraphics[width=0.95\textwidth]{notebook_02_xy_matrix_flow_v2.png}
+\caption{Flujo \(X/Y\): el modelo aprende a aproximar la matriz multietiqueta desde los pesos TF-IDF y después aplica umbrales por artículo.}
+\label{fig:xy}
 \end{figure}
+
+\subsection{Clasificación One-vs-Rest}
+
+El modelo principal es regresión logística One-vs-Rest. Se entrena un clasificador binario por artículo:
+\[
+\text{score}_{j}(x)=\sigma(\bm{w}_{j}^{\top}\bm{x}+b_j),
+\]
+donde \(\bm{x}\) es el vector TF-IDF del caso, \(\bm{w}_{j}\) son los pesos del artículo \(j\) y \(\sigma\) es la función sigmoide. Esta formulación es adecuada para multilabel porque cada artículo puede activarse independientemente.
+
+Los umbrales finales por artículo son:
+\[
+(0.25, 0.40, 0.25, 0.50, 0.20, 0.10, 0.20, 0.10, 0.10, 0.30),
+\]
+en el orden \(2,3,5,6,8,9,10,11,14,P1\)-\(1\). El ajuste por etiqueta es importante porque el desbalanceo hace que un umbral global pueda ser demasiado restrictivo para artículos raros o demasiado permisivo para artículos frecuentes.
 
 \subsection{Retrieval de precedentes}
 
-El módulo de recuperación usa los casos de \texttt{train} como índice de precedentes. Se evalúan dos variantes: TF-IDF con similitud coseno y TF-IDF reducido con TruncatedSVD seguido de coseno. Para mantener el notebook interactivo y reproducible, el índice se construye sobre una muestra de 2500 casos de train y se evalúa sobre 250 consultas por split (\texttt{validation} y \texttt{test}).
+El módulo de recuperación usa casos de train como índice de precedentes. Para una consulta, el sistema la vectoriza y calcula similitud coseno frente al índice. Se evalúan dos variantes: TF-IDF + coseno y TF-IDF + SVD + coseno. La reducción SVD proyecta el espacio disperso a 256 dimensiones densas; no usa etiquetas durante el ajuste, solo resume patrones de vocabulario.
 
-La relevancia se define de forma operacional: un caso recuperado es relevante si comparte al menos un artículo verdadero con la consulta. Las métricas usadas son Recall@5, Recall@10 y nDCG@10. Esta evaluación no sustituye una revisión jurídica experta del precedente; solo mide si el ranking recupera casos con solapamiento de artículos.
+La evaluación se realiza sobre una muestra reproducible de 2500 casos de train como índice y 250 consultas por split. Un resultado recuperado se considera relevante si comparte al menos un artículo verdadero con la consulta. Se reportan Recall@5, Recall@10 y nDCG@10.
 
-\subsection{Explicabilidad}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{notebook_03_retrieval_v2.png}
+\caption{Recuperación de precedentes: una consulta se compara con un índice train y produce un ranking top-\(k\) evaluado por solapamiento de artículos.}
+\label{fig:retrieval_schema}
+\end{figure}
 
-La explicabilidad se aborda en dos niveles. Globalmente, se extraen los términos con mayores coeficientes positivos y negativos por artículo en el modelo lineal. Localmente, se generan explicaciones LIME para cinco casos de test. Además, se incluye una prueba mínima de fidelidad: retirar un término clave y observar el cambio de score. La prueba no valida causalidad, pero ayuda a comprobar si una señal destacada influye de forma medible en el modelo.
+\subsection{Explicabilidad y auditoría}
 
-\subsection{Drift y errores}
+La explicabilidad se aborda en dos niveles. Globalmente se inspeccionan los coeficientes positivos y negativos de cada artículo en el modelo lineal. Localmente se generan cinco explicaciones LIME sobre casos de test y se conserva el HTML en \path{artifacts/reports/}. Además, se realiza una prueba mínima de fidelidad: retirar un término destacado y medir el cambio de score. Esta prueba no demuestra causalidad, pero verifica si una señal explicativa tiene efecto cuantitativo sobre el modelo.
 
-El drift se mide comparando la distribución de artículos de train con validation y test. Se usan divergencia Jensen-Shannon, distancia L1 y similitud coseno. También se calculan deltas de macro-F1, micro-F1 y Hamming loss respecto a validation. El análisis de errores calcula verdaderos positivos, falsos positivos y falsos negativos por caso, y agrupa patrones frecuentes FP/FN por split.
+\subsection{Shift y errores}
+
+El shift se mide comparando la distribución de etiquetas de train con validation y test mediante divergencia Jensen-Shannon, distancia L1 y similitud coseno. También se calculan cambios de macro-F1, micro-F1 y Hamming loss respecto a validation. El análisis de errores separa verdaderos positivos, falsos positivos y falsos negativos por caso, y resume patrones frecuentes FP/FN.
 
 \section{Experimentos y resultados}
 \label{sec:resultados}
 
 \subsection{Clasificación multietiqueta}
 
-La Tabla~\ref{tab:classification} contiene los resultados principales. El modelo alcanza en test macro-F1 de 0.672, micro-F1 de 0.737 y Hamming loss de 0.076. La diferencia entre train y validation/test muestra que el problema no es trivial y que existe sobreajuste moderado o cambio de distribución entre particiones.
+La Tabla~\ref{tab:classification} contiene los resultados finales del modelo principal. En test alcanza macro-F1 de 0.672, micro-F1 de 0.736 y Hamming loss de 0.075. La diferencia frente a train muestra que el problema no se reduce a memorizar vocabulario; hay generalización imperfecta y errores relevantes para auditoría.
 
 \begin{table}[H]
 \centering
-\caption{Resultados principales de clasificación. Fuente: tabla final en artifacts/metrics.}
+\caption{Resultados principales de clasificación. Fuente: \texttt{paper\_classification\_table.csv}.}
 \label{tab:classification}
 \small
 \begin{tabular}{@{}llrrrr@{}}
@@ -203,49 +228,56 @@ La Tabla~\ref{tab:classification} contiene los resultados principales. El modelo
 \textbf{Modelo} & \textbf{Split} & \textbf{Casos} & \textbf{Macro-F1} & \textbf{Micro-F1} & \textbf{Hamming}\\
 \midrule
 TF-IDF LogReg OVR + umbrales & train & 9000 & 0.816 & 0.876 & 0.037\\
-TF-IDF LogReg OVR + umbrales & validation & 1000 & 0.654 & 0.758 & 0.069\\
-TF-IDF LogReg OVR + umbrales & test & 1000 & 0.672 & 0.737 & 0.076\\
+TF-IDF LogReg OVR + umbrales & validation & 1000 & 0.654 & 0.758 & 0.068\\
+TF-IDF LogReg OVR + umbrales & test & 1000 & 0.672 & 0.736 & 0.075\\
 \bottomrule
 \end{tabular}
 \end{table}
-
-El notebook genera además una comparación suplementaria con baseline, Logistic Regression a umbral 0.5, Linear SVM a umbral 0.5 y Logistic Regression con umbrales ajustados. Para el cuerpo principal se reporta únicamente el modelo final seleccionado, evitando mezclar resultados exploratorios con la tabla principal.
-
-\subsection{Retrieval}
-
-La Figura~\ref{fig:retrieval} y la Tabla~\ref{tab:retrieval} resumen el módulo de precedentes. En test, TF-IDF coseno logra Recall@10 de 0.968 y nDCG@10 de 0.868; TF-IDF+SVD obtiene nDCG@10 de 0.870 y Recall@10 de 0.956. La diferencia es pequeña y no debe sobreinterpretarse porque la evaluación es muestral.
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.96\textwidth]{fig05_retrieval_precedents.pdf}
-\caption{Retrieval de precedentes. La evaluación usa 250 consultas por split y un índice reproducible de 2500 casos de train.}
-\label{fig:retrieval}
+\includegraphics[width=0.72\textwidth]{paper_classification_macro_f1.png}
+\caption{Macro-F1 por split del modelo principal.}
+\label{fig:classification_macro}
 \end{figure}
+
+\subsection{Retrieval}
+
+La Tabla~\ref{tab:retrieval} resume los resultados de recuperación de precedentes. En test, TF-IDF + coseno logra Recall@10 de 0.968 y nDCG@10 de 0.867; TF-IDF + SVD + coseno obtiene Recall@10 de 0.956 y nDCG@10 de 0.870. La diferencia entre métodos es pequeña y debe interpretarse dentro de la evaluación muestral.
 
 \begin{table}[H]
 \centering
-\caption{Resultados de retrieval. Fuente: tabla final en artifacts/metrics.}
+\caption{Resultados de retrieval. Fuente: \texttt{paper\_retrieval\_table.csv}.}
 \label{tab:retrieval}
 \small
-\begin{tabular}{@{}llrrrr@{}}
+\begin{tabular}{@{}llrrrrr@{}}
 \toprule
-\textbf{Método} & \textbf{Split} & \textbf{Consultas} & \textbf{nDCG@10} & \textbf{Recall@5} & \textbf{Recall@10}\\
+\textbf{Método} & \textbf{Split} & \textbf{Consultas} & \textbf{Con relevante} & \textbf{nDCG@10} & \textbf{R@5} & \textbf{R@10}\\
 \midrule
-TF-IDF coseno sampled & validation & 250 & 0.883 & 0.948 & 0.964\\
-TF-IDF coseno sampled & test & 250 & 0.868 & 0.940 & 0.968\\
-TF-IDF SVD coseno sampled & validation & 250 & 0.892 & 0.956 & 0.960\\
-TF-IDF SVD coseno sampled & test & 250 & 0.870 & 0.928 & 0.956\\
+TF-IDF coseno & validation & 250 & 241 & 0.883 & 0.948 & 0.964\\
+TF-IDF coseno & test & 250 & 242 & 0.867 & 0.936 & 0.968\\
+TF-IDF SVD coseno & validation & 250 & 240 & 0.892 & 0.956 & 0.960\\
+TF-IDF SVD coseno & test & 250 & 239 & 0.870 & 0.928 & 0.956\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Explicabilidad}
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{paper_retrieval_recall10.png}
+\caption{Recall@10 del módulo de retrieval por método y split.}
+\label{fig:retrieval_recall}
+\end{figure}
 
-La Tabla~\ref{tab:xai} resume los artefactos XAI. Se extraen términos globales para 10 etiquetas y se generan 5 explicaciones locales. La Tabla~\ref{tab:xai_terms} resume los términos positivos y negativos más influyentes por artículo, y la Figura~\ref{fig:xai} muestra un ejemplo local LIME junto con una prueba mínima de fidelidad. El objetivo es auditar señales del modelo, no demostrar razonamiento jurídico.
+Un ejemplo real de test ilustra el uso previsto. Para \texttt{ecthr\_task\_b\_test\_000002}, el artículo verdadero es el 6 y el sistema predice artículo 6. El texto menciona permiso de construcción, recursos ante tribunales regionales y tribunal supremo administrativo; el módulo de retrieval busca casos train con vocabulario jurídico cercano y el ranking se evalúa por artículos compartidos. La salida sirve como lista inicial de precedentes candidatos, no como validación doctrinal.
+
+\subsection{XAI}
+
+La Tabla~\ref{tab:xai} resume los artefactos XAI. Se extraen pesos globales para 10 artículos y se generan cinco explicaciones locales. La probabilidad positiva media de los ejemplos LIME es 0.736.
 
 \begin{table}[H]
 \centering
-\caption{Resumen XAI. Fuente: tabla final en artifacts/metrics.}
+\caption{Resumen XAI. Fuente: \texttt{paper\_xai\_table.csv}.}
 \label{tab:xai}
 \small
 \begin{tabular}{@{}rrrr@{}}
@@ -259,7 +291,7 @@ La Tabla~\ref{tab:xai} resume los artefactos XAI. Se extraen términos globales 
 
 \begin{table}[H]
 \centering
-\caption{Términos globales principales por artículo. Fuente: coeficientes del modelo lineal final.}
+\caption{Términos globales principales por artículo. Fuente: \texttt{xai\_global\_terms.csv}.}
 \label{tab:xai_terms}
 \scriptsize
 \resizebox{\textwidth}{!}{%
@@ -267,16 +299,16 @@ La Tabla~\ref{tab:xai} resume los artefactos XAI. Se extraen términos globales 
 \toprule
 \textbf{Artículo} & \textbf{Términos positivos} & \textbf{Términos negativos}\\
 \midrule
-2 & death (3.36); the death (2.10); son (1.96) & the applicant (-1.52); applicant (-1.15); applicant had (-1.11)\\
-3 & cell (3.42); treatment (2.86); medical (2.50) & court of (-1.15); cassation (-1.08); hearing (-1.06)\\
-5 & detention (6.72); release (4.61); applicant detention (4.10) & judgment (-1.09); claim (-0.99); 1998 (-0.95)\\
-6 & hearing (3.40); hearings (2.25); the proceedings (2.22) & detention (-3.58); applicant detention (-1.92); release (-1.89)\\
-8 & child (3.07); family (2.61); censored (2.45) & hearing (-1.19); the judgment (-1.01); hearings (-0.93)\\
-9 & religious (3.83); the religious (1.52); of religious (1.48) & regional court (-0.47); compensation (-0.45); 2004 (-0.41)\\
-10 & newspaper (3.01); published (2.67); the article (2.46) & detention (-0.90); 2006 (-0.72); the applicant (-0.72)\\
-11 & demonstration (2.93); association (1.86); the demonstration (1.84) & the applicant (-0.86); applicant (-0.71); proceedings (-0.71)\\
-14 & discrimination (1.79); roma (1.62); religious (1.45) & district court (-1.00); 2004 (-0.98); judgment (-0.90)\\
-P1-1 & land (2.61); enforcement (2.27); property (2.24) & hearing (-1.50); hearings (-1.36); detention (-1.24)\\
+2 & death; the death; son; died; autopsy & the applicant; applicant; applicant had; applicant was; appeal\\
+3 & cell; treatment; medical; prison; cells & court of; cassation; hearing; proceedings; judgment\\
+5 & detention; release; applicant detention; custody; detained & judgment; claim; 1998; proceedings; applicant company\\
+6 & hearing; hearings; the proceedings; proceedings; court & detention; applicant detention; release; custody; detained\\
+8 & child; family; censored; children; private life & hearing; the judgment; hearings; detention; release\\
+9 & religious; the religious; of religious; religion; church & regional court; compensation; 2004; district court; judgment\\
+10 & newspaper; published; the article; journalist; publication & detention; 2006; the applicant; applicant; criminal proceedings\\
+11 & demonstration; association; the demonstration; assembly; trade union & the applicant; applicant; proceedings; judgment; court\\
+14 & discrimination; roma; religious; sex; origin & district court; 2004; judgment; hearing; proceedings\\
+P1-1 & land; enforcement; property; possessions; apartment & hearing; hearings; detention; release; custody\\
 \bottomrule
 \end{tabular}
 }
@@ -284,18 +316,20 @@ P1-1 & land (2.61); enforcement (2.27); property (2.24) & hearing (-1.50); heari
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.88\textwidth]{fig06_xai_global_local.pdf}
-\caption{XAI local. LIME y la prueba de retirada de término se interpretan como señales auditables del modelo, no como causalidad jurídica ni justificación doctrinal.}
-\label{fig:xai}
+\includegraphics[width=0.95\textwidth]{notebook_04_audit_v2.png}
+\caption{Auditoría del modelo: pesos globales, LIME, shift entre splits y separación de falsos positivos/falsos negativos.}
+\label{fig:xai_audit}
 \end{figure}
 
-\subsection{Drift y patrones de error}
+Las explicaciones son interpretables como señales del modelo. Por ejemplo, en artículos relacionados con libertad y seguridad aparecen términos como \textit{detention}, \textit{release} o \textit{custody}; en libertad de expresión aparecen \textit{newspaper}, \textit{published} y \textit{journalist}. Estas asociaciones son plausibles, pero la relevancia jurídica depende del contexto completo del caso.
 
-La Tabla~\ref{tab:drift} muestra un shift moderado de etiquetas. En test, la divergencia JS respecto a train es 0.026 y la similitud coseno 0.951. Macro-F1 aumenta ligeramente respecto a validation, mientras micro-F1 baja y Hamming loss aumenta. Esto sugiere que el comportamiento no se resume con una sola métrica.
+\subsection{Shift y errores}
+
+La Tabla~\ref{tab:drift} muestra shift moderado de etiquetas. En test, la divergencia JS respecto a train es 0.026 y la similitud coseno 0.951. Macro-F1 aumenta ligeramente respecto a validation, mientras micro-F1 baja y Hamming loss aumenta. El comportamiento, por tanto, no se resume con una única métrica.
 
 \begin{table}[H]
 \centering
-\caption{Drift de etiquetas y cambios de rendimiento respecto a validation. Fuente: tabla final en artifacts/metrics.}
+\caption{Shift de etiquetas y cambios de rendimiento respecto a validation. Fuente: \texttt{paper\_drift\_table.csv}.}
 \label{tab:drift}
 \small
 \begin{tabular}{@{}lrrrrrr@{}}
@@ -310,103 +344,105 @@ test & 0.026 & 0.320 & 0.951 & +0.018 & -0.022 & +0.007\\
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\textwidth]{fig07_drift_error_distributions.pdf}
-\caption{Distribuciones de error y label shift. Las líneas punteadas indican medias por split.}
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{paper_drift_js_divergence.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+\centering
+\includegraphics[width=\textwidth]{paper_error_patterns.png}
+\end{minipage}
+\caption{Divergencia JS de etiquetas y patrones frecuentes de error en test.}
 \label{fig:drift_errors}
 \end{figure}
 
-La Tabla~\ref{tab:error_patterns} recoge los patrones más frecuentes en test. El caso ideal, sin falsos positivos ni falsos negativos, aparece en 463 casos. Aun así, 194 casos tienen un falso positivo y 165 un falso negativo. Esta diferencia es práctica: un falso positivo suele añadir trabajo de revisión, mientras que un falso negativo puede ocultar una línea argumental relevante.
+La Tabla~\ref{tab:error_patterns} recoge los patrones más frecuentes en test. El caso ideal, sin falsos positivos ni falsos negativos, aparece en 462 casos. Aun así, 194 casos tienen un falso positivo y 167 un falso negativo. En esta tarea, un falso positivo añade trabajo de revisión; un falso negativo puede ocultar una línea argumental relevante.
 
 \begin{table}[H]
 \centering
-\caption{Patrones de error más frecuentes en test. Fuente: tabla final en artifacts/metrics.}
+\caption{Patrones de error más frecuentes en test. Fuente: \texttt{paper\_error\_pattern\_table.csv}.}
 \label{tab:error_patterns}
 \small
 \begin{tabular}{@{}rrr@{}}
 \toprule
 \textbf{FP} & \textbf{FN} & \textbf{Casos}\\
 \midrule
-0 & 0 & 463\\
+0 & 0 & 462\\
 1 & 0 & 194\\
-0 & 1 & 165\\
-1 & 1 & 82\\
-0 & 2 & 35\\
-2 & 0 & 30\\
+0 & 1 & 167\\
+1 & 1 & 85\\
+0 & 2 & 38\\
+2 & 0 & 26\\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[H]
 \centering
-\caption{Promedios de error por split. Fuente: tabla final en artifacts/metrics.}
+\caption{Promedios de error por split. Fuente: \texttt{paper\_error\_split\_table.csv}.}
 \label{tab:error_split}
 \small
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
 \textbf{Split} & \textbf{TP} & \textbf{FP} & \textbf{FN} & \textbf{Errores}\\
 \midrule
-train & 1.325 & 0.237 & 0.138 & 0.374\\
-validation & 1.075 & 0.369 & 0.316 & 0.685\\
-test & 1.058 & 0.379 & 0.377 & 0.756\\
+train & 1.322 & 0.232 & 0.141 & 0.373\\
+validation & 1.069 & 0.360 & 0.322 & 0.682\\
+test & 1.050 & 0.367 & 0.385 & 0.752\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=\textwidth]{fig08_contributions_summary.pdf}
-\caption{Mapa compacto de contribuciones: dataset completo, modelo multietiqueta, retrieval, XAI, drift y análisis crítico.}
-\label{fig:contrib}
-\end{figure}
-
 \section{Discusión}
 \label{sec:discusion}
 
-El resultado principal es que un pipeline clásico, reproducible y auditable ofrece una base razonable para priorizar artículos y precedentes en ECtHR Task B. Sin embargo, las métricas no deben confundirse con competencia jurídica. Un macro-F1 de 0.672 en test indica utilidad parcial, no fiabilidad suficiente para operar sin supervisión. En derecho, el coste de un error depende de su tipo y contexto.
+El resultado principal es que un pipeline clásico, reproducible y auditable puede ayudar a priorizar artículos y precedentes en ECtHR Task B. Sin embargo, las métricas no deben confundirse con competencia jurídica. Un macro-F1 de 0.672 en test sugiere utilidad parcial, no fiabilidad suficiente para operar sin supervisión.
 
-Los falsos negativos son especialmente delicados: si el sistema no sugiere un artículo relevante, el usuario puede omitir una línea argumental. Esto puede afectar la estrategia de análisis incluso cuando el resto de etiquetas sean correctas. Los falsos positivos tienen otro tipo de coste: aumentan carga de revisión, pueden introducir ruido y pueden sesgar la búsqueda hacia artículos menos pertinentes. Por ello, en un despliegue real los umbrales deberían ajustarse según coste de error y perfil de usuario, no solo por F1.
+Los falsos negativos son especialmente delicados. Si el sistema no sugiere un artículo relevante, el usuario puede omitir una línea argumental. Los falsos positivos tienen otro coste: aumentan carga de revisión y pueden sesgar la búsqueda hacia artículos menos pertinentes. En un despliegue real, los umbrales deberían ajustarse según coste de error, perfil de usuario y política de revisión, no solo por F1.
 
-El módulo de retrieval puede ahorrar tiempo al localizar casos similares, pero también puede anclar al usuario en precedentes históricos. Si el ranking recupera casos por similitud superficial o por artículos compartidos, el analista podría sobrevalorar analogías débiles. La evaluación utilizada es reproducible, pero limitada: compartir un artículo verdadero no garantiza similitud doctrinal ni relevancia argumentativa.
+El retrieval puede ahorrar tiempo al localizar casos con similitud textual, pero también puede producir anclaje. Que dos casos compartan un artículo no garantiza que sean doctrinalmente equivalentes. La evaluación usada es adecuada para medir solapamiento de etiquetas, pero una evaluación jurídica completa requeriría expertos y criterios de similitud más finos.
 
-Las explicaciones por coeficientes y LIME son útiles para auditoría, pero no equivalen a razonamiento jurídico. Un término como ``detention'', ``hearing'' o ``newspaper'' puede ser predictivo de ciertos artículos, pero la relevancia jurídica exige contexto, hechos, estándares doctrinales y valoración normativa. Las explicaciones deben presentarse como señales de inspección, no como justificaciones suficientes.
+Las explicaciones por pesos y LIME son útiles para auditar el modelo, detectar señales razonables y encontrar posibles atajos. Aun así, una palabra como \textit{detention}, \textit{hearing} o \textit{newspaper} no es una justificación legal completa. La explicación debe presentarse como ayuda de inspección, no como argumento jurídico.
 
-El drift observado es moderado, pero conceptualmente importante. En un dominio jurídico, un cambio de distribución puede deberse a evolución jurisprudencial, cambios en tipos de demanda o diferencias temporales del benchmark. El sistema debería monitorizar drift, rendimiento y errores de forma periódica, y cualquier política de reentrenamiento debería revisarse con expertos jurídicos.
+El shift observado entre particiones es moderado. Como el dataset usado no aporta año oficial de sentencia, no se afirma deriva temporal estricta. El análisis sí muestra que la distribución de etiquetas y las métricas cambian entre splits; por tanto, un sistema real debería monitorizar distribución, rendimiento y errores de forma continua.
 
-Finalmente, la privacidad no es el eje experimental del proyecto porque el dataset es público. Aun así, un sistema real aplicado a expedientes o consultas jurídicas podría procesar información sensible. Un despliegue responsable requeriría minimización de datos, anonimización cuando sea posible, control de acceso, registros de auditoría y claridad sobre el uso de modelos externos.
+Finalmente, la privacidad no es el eje experimental porque el benchmark es público. Si el sistema procesara expedientes o consultas reales, harían falta minimización de datos, anonimización, control de acceso, registros de auditoría y claridad sobre si se usan modelos externos o infraestructura local.
 
 \section{Conclusiones}
 \label{sec:conclusiones}
 
-Este trabajo presenta un sistema de apoyo al análisis inicial de casos ante el TEDH basado en recuperación de precedentes, clasificación multietiqueta explicable y análisis de drift. La contribución técnica es un pipeline reproducible que parte de SQLite, entrena TF-IDF + One-vs-Rest, ajusta umbrales, genera predicciones auditables y produce tablas y figuras listas para informe.
+Este trabajo presenta un sistema de apoyo al análisis inicial de casos ante el TEDH basado en clasificación multietiqueta explicable, recuperación de precedentes y análisis de shift. La contribución técnica es un pipeline reproducible que parte de SQLite, entrena TF-IDF + One-vs-Rest, ajusta umbrales, guarda predicciones auditables y produce tablas y figuras para informe y defensa.
 
-Los resultados muestran un comportamiento útil pero limitado. En test, el modelo alcanza macro-F1 de 0.672 y micro-F1 de 0.737, mientras que el retrieval obtiene Recall@10 alto en una evaluación muestral. Estas cifras sugieren que el sistema puede ayudar a priorizar revisión, pero no sostienen automatización de decisiones ni reemplazo de interpretación jurídica.
+Los resultados muestran un comportamiento útil pero limitado. En test, el modelo principal alcanza macro-F1 de 0.672 y micro-F1 de 0.736. El módulo de retrieval obtiene Recall@10 alto en una evaluación muestral, especialmente con TF-IDF + coseno. Estas cifras apoyan el uso del sistema como priorizador, no como automatizador de decisiones.
 
-La lección principal es metodológica: en ML aplicado al derecho, el valor no está solo en mejorar una métrica, sino en conectar resultados con consecuencias reales. Falsos negativos, falsos positivos, anclaje por precedentes, límites de XAI y drift temporal deben discutirse explícitamente. Esta discusión es parte del sistema, no un añadido posterior.
+La lección principal es metodológica: en ML aplicado al derecho, el valor no está solo en mejorar una métrica. También importa conectar resultados con consecuencias reales: falsos negativos, falsos positivos, anclaje por precedentes, límites de XAI, shift de distribución y privacidad.
 
-Como trabajo futuro, se propone evaluación cualitativa de precedentes por expertos, análisis temporal por ventanas más finas, calibración de probabilidades, políticas de umbral por coste de error, comparación controlada con modelos jurídicos contextualizados y un diseño de despliegue que incorpore privacidad, auditoría y supervisión humana obligatoria.
+Como trabajo futuro se propone evaluar precedentes con expertos, incorporar metadatos temporales si están disponibles, calibrar probabilidades, ajustar umbrales por coste de error, comparar de forma controlada con modelos jurídicos contextualizados y diseñar un despliegue con auditoría y supervisión humana obligatoria.
 
 \appendix
 \section{Anexos}
 
 \subsection{Artefactos reproducibles}
 
-Las tablas finales se guardan en \path{artifacts/metrics/}: \path{paper_classification_table.csv}, \path{paper_retrieval_table.csv}, \path{paper_xai_table.csv}, \path{paper_drift_table.csv}, \path{paper_error_pattern_table.csv} y \path{paper_error_split_table.csv}. Las figuras científicas se generan desde celdas incluidas en los notebooks y se guardan en \path{artifacts/figures/} como PDF y PNG.
+Las tablas finales se guardan en \path{artifacts/metrics/}: \path{paper_classification_table.csv}, \path{paper_retrieval_table.csv}, \path{paper_xai_table.csv}, \path{paper_drift_table.csv}, \path{paper_error_pattern_table.csv} y \path{paper_error_split_table.csv}. Los modelos y transformadores persistidos están en \path{artifacts/models/}: vectorizador TF-IDF, regresión logística OVR, SVM OVR y umbrales del modelo principal. Las explicaciones LIME están en \path{artifacts/reports/}.
 
-\subsection{Uso de Image Gen}
+\subsection{Figuras}
 
-Las Figuras~\ref{fig:overview}--\ref{fig:contrib} son figuras científicas generadas con Matplotlib a partir de datos, métricas o esquemas definidos en los notebooks. De forma separada, se prepararon ilustraciones conceptuales suplementarias con Image Gen para material visual de apoyo. Estas imágenes no sustituyen resultados experimentales ni se usan para inferir métricas. Los prompts se guardan en \path{artifacts/figures/generated/imagegen_prompts.md}. Los cinco prompts documentados fueron:
-
-\begin{enumerate}
-\item Ilustración académica limpia de un texto jurídico que fluye hacia vectores TF-IDF, predicción multietiqueta, retrieval de precedentes y explicabilidad, con etiquetas en español.
-\item Diagrama de transición de estados: caso ECtHR bruto, estructura SQLite/TF-IDF/scores y salida con artículos candidatos, precedentes y explicación.
-\item Figura editorial sobre falsos positivos y falsos negativos en identificación de cuestiones jurídicas.
-\item Ilustración conceptual de drift temporal en ML jurídico, con cambio de distribución y política de reentrenamiento.
-\item Visual abstract del proyecto: ECtHR Task B, 11000 casos, TF-IDF + One-vs-Rest, retrieval, XAI y drift.
-\end{enumerate}
+La memoria usa figuras de dos tipos. Las figuras cuantitativas proceden de CSV y notebooks: \path{paper_classification_macro_f1.png}, \path{paper_retrieval_recall10.png}, \path{paper_drift_js_divergence.png} y \path{paper_error_patterns.png}. Las figuras conceptuales se guardan en \path{artifacts/figures/generated/} y sirven para explicar visualmente ingesta, EDA, matrices \(X/Y\), retrieval, auditoría y evidencias. No sustituyen a las métricas experimentales.
 
 \subsection{Notebooks}
 
-El pipeline final consta de cinco notebooks: \path{00_diagnostico_y_decisiones.ipynb}, \path{01_datos_y_eda.ipynb}, \path{02_modelado_multilabel.ipynb}, \path{03_retrieval_de_precedentes.ipynb} y \path{04_xai_drift_y_errores.ipynb}. El notebook \path{05_guion_informe_y_defensa.ipynb} no forma parte del pipeline final; su contenido útil fue trasladado al README y a este informe.
+El pipeline actual está organizado en seis notebooks en la raíz del repositorio:
+
+\begin{enumerate}
+\item \path{00_ingesta_y_esquema_relacional.ipynb}: ingesta, normalización, SQLite y comprobaciones.
+\item \path{01_EDA.ipynb}: EDA, desbalanceo, longitud, coocurrencias y ejemplos reales.
+\item \path{02_modelado_multilabel.ipynb}: TF-IDF, One-vs-Rest, umbrales, métricas y predicciones.
+\item \path{03_retrieval_de_precedentes.ipynb}: índices TF-IDF/SVD y evaluación de precedentes.
+\item \path{04_xai_drift_y_errores.ipynb}: pesos, LIME, shift entre particiones y errores.
+\item \path{05_guion_informe_y_defensa.ipynb}: consolidación de evidencias, tablas y guion de defensa.
+\end{enumerate}
 
 \begin{thebibliography}{9}
 
@@ -439,11 +475,6 @@ Gama, J., Žliobaitė, I., Bifet, A., Pechenizkiy, M. y Bouchachia, A.
 Moreno-Torres, J. G., Raeder, T., Alaiz-Rodríguez, R., Chawla, N. V. y Herrera, F.
 \newblock A unifying view on dataset shift in classification.
 \newblock \textit{Pattern Recognition}, 45(1):521--530, 2012.
-
-\bibitem{shojaee2025illusion}
-Shojaee, P. et al.
-\newblock The illusion of thinking: Understanding the strengths and limitations of reasoning models via the lens of problem complexity.
-\newblock Apple Machine Learning Research, 2025.
 
 \end{thebibliography}
 

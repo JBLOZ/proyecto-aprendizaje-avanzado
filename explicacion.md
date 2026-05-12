@@ -1,135 +1,230 @@
-He revisado el proyecto. Punto clave: **aquí no se entrenan redes neuronales**. El sistema usa aprendizaje automático clásico y explicable: **TF-IDF + clasificadores lineales One-vs-Rest**. Si en la defensa dices “red neuronal”, te pueden pillar; lo correcto es decir que el modelo funciona como una **capa lineal por artículo**, sin capas ocultas ni embeddings neuronales.
+# Explicacion del proyecto
 
-**Qué hace cada archivo**
-- [README.md](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/README.md): explica el objetivo completo: apoyo al análisis inicial de casos TEDH, predicción multietiqueta de artículos, retrieval, XAI, drift y errores.
-- [schema.sql](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/schema.sql): define la base SQLite: `cases`, `case_paragraphs`, `articles`, `case_labels`, `predictions`, `experiment_runs`, `explanations`.
-- [00_diagnostico_y_decisiones.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/00_diagnostico_y_decisiones.ipynb): descarga LexGLUE ECtHR Task B, normaliza textos y etiquetas, y crea `data/interim/metadata.db`.
-- [01_datos_y_eda.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/01_datos_y_eda.ipynb): analiza tamaño de splits, longitud de casos, frecuencia de artículos, coocurrencias y temporalidad.
-- [02_modelado_multilabel.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/02_modelado_multilabel.ipynb): entrena o reutiliza el modelo principal: TF-IDF, regresión logística OVR, SVM OVR y umbrales por etiqueta.
-- [03_retrieval_de_precedentes.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/03_retrieval_de_precedentes.ipynb): construye el buscador de precedentes con similitud coseno.
-- [04_xai_drift_y_errores.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/04_xai_drift_y_errores.ipynb): carga predicciones, explica pesos, genera LIME, calcula drift y analiza falsos positivos/falsos negativos.
-- [05_guion_informe_y_defensa.ipynb](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/05_guion_informe_y_defensa.ipynb): consolida tablas, figuras y narrativa para informe/defensa.
-- [proyecto_main.tex](/Users/jordiblascolozano/Documents/proyecto%20aprendizaje%20avanzado/proyecto_main.tex): memoria final en LaTeX.
-- `artifacts/`: contiene modelos `.joblib`, métricas `.csv`, figuras y explicaciones HTML.
-- `data/interim/metadata.db`: base de datos central del pipeline.
+Este documento resume el proyecto con lenguaje simple para preparar la entrega y la defensa.
 
-**Flujo de datos exacto**
-1. El dataset entra desde Hugging Face: `lex_glue / ecthr_b`.
-2. Cada caso viene como texto o lista de párrafos. El notebook 00 busca campos como `text`, `facts`, `document`, etc.
-3. Los párrafos se unen en `text_full`.
-4. Se extraen metadatos: `case_id`, `split`, `year`, `n_paragraphs`, `n_tokens`.
-5. Las etiquetas del caso se convierten en artículos positivos.
-6. Todo se guarda en SQLite:
-   - `cases`: 11.000 casos.
-   - `case_paragraphs`: 262.580 párrafos.
-   - `articles`: 10 artículos.
-   - `case_labels`: 15.991 pares positivos caso-artículo.
-7. En el notebook 02 se leen `cases` y `case_labels`.
-8. Se construye una matriz `Y` de tamaño `11000 x 10`. Cada fila es un caso; cada columna es un artículo. Un `1` significa “este artículo aplica”.
-9. Se separan los splits:
-   - `train`: 9000 casos.
-   - `validation`: 1000 casos.
-   - `test`: 1000 casos.
-10. El texto `text_full` se transforma con `TfidfVectorizer`:
-   - unigramas y bigramas;
-   - `min_df=2`;
-   - `max_df=0.95`;
-   - `sublinear_tf=True`;
-   - máximo 60.000 features.
-11. El vectorizador solo se ajusta con `train`. Luego transforma `train`, `validation` y `test`.
-12. El resultado es una matriz dispersa `X`: filas = casos, columnas = términos/bigramas.
-13. Para cada artículo se entrena un clasificador binario independiente. Eso es One-vs-Rest:
-   - clasificador 0: artículo 2 sí/no;
-   - clasificador 1: artículo 3 sí/no;
-   - etc.
-14. La regresión logística produce un score por artículo.
-15. En `validation` se buscan umbrales individuales por artículo entre `0.10` y `0.90`.
-16. Los umbrales finales son:
-   `0.25, 0.40, 0.25, 0.50, 0.20, 0.10, 0.20, 0.10, 0.10, 0.30`.
-17. Para cada caso:
-   - si `score_articulo >= umbral_articulo`, se predice `1`;
-   - si no, se predice `0`.
-18. Las predicciones se guardan en `predictions` con:
-   - `y_true_json`;
-   - `y_pred_json`;
-   - `scores_json`.
+El sistema ayuda a revisar casos del Tribunal Europeo de Derechos Humanos. A partir del texto de los hechos, propone articulos candidatos y busca precedentes parecidos.
 
-**Cómo “funciona” el modelo**
-No hay neuronas. Lo que hay es esto:
+No predice sentencias. No decide si hay violacion juridica. La decision final siempre debe ser humana.
+
+## 1. Idea principal
+
+El proyecto usa aprendizaje automatico clasico y auditable.
 
 ```text
-texto del caso
-→ vector TF-IDF
-→ 10 clasificadores lineales
-→ 10 scores
-→ 10 umbrales
-→ vector multietiqueta final
+TF-IDF dentro de Pipeline
+modelos One-vs-Rest
+GridSearchCV con 5 folds
+evaluacion final en test
 ```
 
-Para cada artículo, la regresión logística calcula algo parecido a:
+La idea no es crear un juez automatico. La idea es priorizar lectura y facilitar auditoria.
+
+## 2. Protocolo correcto
+
+Este es el punto mas importante para la defensa.
+
+1. Se separa `test` desde el principio.
+2. Los hiperparametros se seleccionan solo con `train`.
+3. La seleccion usa `GridSearchCV` con 5 folds.
+4. TF-IDF esta dentro del `Pipeline`.
+5. SVD y escalado tambien estan dentro del `Pipeline` en la MLP.
+6. El mejor estimador se reentrena con todo `train`.
+7. `test` se usa una sola vez para la evaluacion final.
+
+No se ajustan hiperparametros, umbrales ni arquitectura mirando `test`.
+
+`validation` queda como particion oficial e informativa. No decide el modelo final en el protocolo corregido.
+
+## 3. Archivos principales
+
+| Archivo | Funcion |
+|---|---|
+| `README.md` | Resume el proyecto, ejecucion y resultados. |
+| `memoria.tex` | Contiene la memoria final. |
+| `schema.sql` | Define la base SQLite. |
+| `project_utils.py` | Contiene funciones comunes. |
+| `00_ingesta_y_esquema_relacional.ipynb` | Carga datos y crea SQLite. |
+| `01_EDA.ipynb` | Analiza datos, splits y desbalanceo. |
+| `02_modelado_multilabel.ipynb` | Entrena pipelines con GridSearchCV y evalua test. |
+| `03_retrieval_de_precedentes.ipynb` | Busca precedentes similares. |
+| `04_xai_drift_y_errores.ipynb` | Revisa explicabilidad, shift y errores. |
+| `05_guion_informe_y_defensa.ipynb` | Consolida evidencias para la defensa. |
+
+## 4. Datos
+
+El dataset es **LexGLUE ECtHR Task B**.
+
+| Elemento | Valor |
+|---|---:|
+| Casos totales | 11000 |
+| Train | 9000 |
+| Validation | 1000 |
+| Test | 1000 |
+| Articulos posibles | 10 |
+| Pares positivos caso articulo | 15991 |
+| Parrafos almacenados | 262580 |
+
+Etiquetas usadas
 
 ```text
-score bruto = peso_1 * termino_1 + peso_2 * termino_2 + ... + bias
-probabilidad = sigmoid(score bruto)
+2, 3, 5, 6, 8, 9, 10, 11, 14, P1-1
 ```
 
-Si términos como `detention`, `release` o `custody` aparecen con TF-IDF alto, empujan el artículo 5. Si aparecen `hearing`, `proceedings`, `judgment`, empujan el artículo 6. Eso se puede auditar porque los pesos del modelo son visibles.
+Es un problema multietiqueta. Un caso puede tener varios articulos positivos.
 
-**Resultados principales**
-En clasificación, el modelo principal `tfidf_logreg_threshold_tuned` consigue:
-- `test macro-F1`: 0.672
-- `test micro-F1`: 0.736
-- `test Hamming loss`: 0.0752
+## 5. Modelos comparados
 
-En retrieval:
-- TF-IDF + coseno en test tiene `Recall@10 = 0.968`.
-- SVD + coseno en test tiene `Recall@10 = 0.956`.
+| Modelo | Papel |
+|---|---|
+| Baseline de articulo frecuente | Punto de partida simple. |
+| Regresion logistica OVR | Modelo auditado. |
+| SVM lineal OVR | Mejor rendimiento final en test. |
+| TF-IDF + SVD + MLP | Comparacion secundaria no lineal. |
 
-**Frase buena para defensa**
-“El sistema no usa una red neuronal secuencial. Cada caso se representa como un vector TF-IDF de unigramas y bigramas. Sobre esa matriz entrenamos clasificadores lineales One-vs-Rest, uno por artículo. Cada clasificador devuelve un score, y después aplicamos umbrales ajustados en validación para obtener una salida multietiqueta revisable.”
+Resultados finales en test
 
-**Retrieval** significa **recuperación de información**: dado un caso nuevo, el sistema busca en una colección de casos anteriores cuáles son los más parecidos.
+| Modelo | Macro-F1 | Micro-F1 | Hamming loss |
+|---|---:|---:|---:|
+| SVM lineal OVR | 0.749 | 0.777 | 0.061 |
+| LogReg OVR | 0.736 | 0.760 | 0.069 |
+| TF-IDF + SVD + MLP | 0.690 | 0.767 | 0.062 |
+| Baseline | 0.057 | 0.324 | 0.165 |
 
-En tu proyecto, retrieval es la parte de **recuperación de precedentes jurídicos**.
+Resultados de CV sobre train
 
-El flujo es:
+| Modelo | Mejor macro-F1 CV |
+|---|---:|
+| SVM lineal OVR | 0.733 |
+| LogReg OVR | 0.726 |
+| TF-IDF + SVD + MLP | 0.698 |
+
+Conclusion clara
 
 ```text
-caso nuevo
-→ se convierte a vector TF-IDF
-→ se compara con casos antiguos de train
-→ se calcula similitud coseno
-→ se devuelven los casos más parecidos
+Mejor rendimiento en test -> SVM lineal
+Modelo usado para auditoria -> regresion logistica
+MLP -> comparacion secundaria
 ```
 
-Ejemplo simple:
+La SVM gana en rendimiento. La regresion logistica se usa para explicar y auditar porque sus coeficientes son directos. La MLP no mejora a los modelos lineales. Probar redes mas grandes mirando test no seria correcto porque romperia el protocolo.
+
+## 6. Retrieval de precedentes
+
+Retrieval significa buscar casos parecidos. El sistema compara el caso de consulta con casos de `train`.
 
 ```text
-Caso nuevo:
-"detención provisional, falta de revisión judicial, duración excesiva"
-
-El sistema busca casos antiguos con vocabulario parecido:
-1. caso sobre detention + release
-2. caso sobre custody + judicial review
-3. caso sobre remand detention
+caso de consulta
+-> vector TF-IDF
+-> similitud coseno
+-> ranking de precedentes
 ```
 
-No está “prediciendo” artículos ahí. Está haciendo una búsqueda ordenada: **este caso se parece más a estos otros casos**.
+Resultados en test
 
-En tu proyecto hay dos variantes:
+| Metodo | nDCG@10 | Recall@5 | Recall@10 |
+|---|---:|---:|---:|
+| TF-IDF + coseno | 0.867 | 0.944 | 0.972 |
+| TF-IDF + SVD + coseno | 0.876 | 0.940 | 0.956 |
 
-1. **TF-IDF + coseno**
-   - Representa cada caso como bolsa de palabras/bigramas ponderados.
-   - Compara la similitud entre vectores.
-   - Es transparente y fácil de explicar.
+El resultado principal es **Recall@10 = 0.972** con TF-IDF + coseno.
 
-2. **TF-IDF + SVD + coseno**
-   - Primero reduce la dimensión del vector TF-IDF.
-   - Después compara en un espacio más compacto.
-   - No es red neuronal; es una proyección lineal.
+La relevancia se aproxima con articulos compartidos. Esto no demuestra que dos casos sean precedentes equivalentes en sentido juridico. Para eso haria falta validacion por juristas.
 
-La evaluación mira si los casos recuperados comparten al menos un artículo real con la consulta. Por eso usas métricas como `Recall@5`, `Recall@10` y `nDCG@10`.
+## 7. Explicabilidad
 
-Frase de defensa:
+El proyecto usa dos tipos de explicabilidad.
 
-> Retrieval es el módulo de búsqueda de precedentes. Dado un caso de consulta, no predice una sentencia, sino que ordena casos anteriores por similitud textual y permite revisar precedentes que comparten problemáticas jurídicas cercanas.
+1. Coeficientes globales de la regresion logistica.
+2. Explicaciones locales con LIME.
+
+Resumen de XAI
+
+| Elemento | Valor |
+|---|---:|
+| Etiquetas con terminos globales | 10 |
+| Explicaciones locales | 5 |
+| Peso global medio absoluto | 2.265 |
+| Probabilidad local positiva media | 0.816 |
+
+Las explicaciones no son razonamiento juridico. Solo muestran que senales textuales usa el modelo.
+
+## 8. Caso practico de auditoria local
+
+Caso verificado en los artefactos.
+
+| Elemento | Valor |
+|---|---|
+| Caso | `ecthr_task_b_test_000000` |
+| Split | `test` |
+| Longitud | 4774 tokens |
+| Articulo explicado | 10 |
+| Score LogReg | 0.96047279757764 |
+| Terminos LIME | `journalist`, `broadcasting`, `journalists`, `press` |
+
+El ejemplo tiene sentido porque el articulo 10 se relaciona con libertad de expresion. Aun asi, no prueba que el articulo este juridicamente bien aplicado. Solo muestra trazabilidad del modelo.
+
+## 9. Shift y errores
+
+El proyecto no mide deriva temporal real. La version usada no proporciona un ano oficial de sentencia para todos los casos. Por eso se habla de shift entre particiones.
+
+| Split objetivo | JS | L1 | Coseno | Delta macro-F1 | Delta micro-F1 | Delta Hamming |
+|---|---:|---:|---:|---:|---:|---:|
+| validation | 0.017 | 0.278 | 0.959 | 0.000 | 0.000 | 0.000 |
+| test | 0.026 | 0.320 | 0.951 | 0.006 | -0.015 | 0.005 |
+
+JS, L1 y coseno comparan distribucion frente a `train`. Los deltas de rendimiento comparan frente a `validation`.
+
+Patrones de error en test
+
+| FP | FN | Casos |
+|---:|---:|---:|
+| 0 | 0 | 491 |
+| 1 | 0 | 189 |
+| 0 | 1 | 170 |
+| 1 | 1 | 65 |
+| 0 | 2 | 36 |
+| 2 | 0 | 25 |
+
+Un falso positivo es un articulo que el modelo anade de mas. Un falso negativo es un articulo real que el modelo no detecta. Los falsos negativos son delicados porque pueden ocultar articulos relevantes.
+
+## 10. Desbalanceo
+
+No se eliminan casos del articulo 6. Como el problema es multietiqueta, al quitar un caso del articulo 6 tambien se pueden quitar positivos de otros articulos.
+
+El proyecto trata el desbalanceo con tres decisiones.
+
+1. Macro-F1 como metrica principal de seleccion.
+2. Pesos de clase cuando procede.
+3. Analisis separado de falsos positivos y falsos negativos.
+
+## 11. Frases utiles para defensa
+
+El proyecto no automatiza decisiones judiciales. Sirve para apoyar la revision inicial.
+
+El mejor modelo en test es la SVM lineal One-vs-Rest.
+
+La regresion logistica se usa para auditoria porque permite revisar coeficientes.
+
+El MLP aparece como comparacion secundaria y no mejora a los modelos lineales.
+
+El retrieval ordena casos parecidos. No demuestra que sean precedentes equivalentes en sentido juridico.
+
+Test no se usa para ajustar nada. Solo se usa para la evaluacion final.
+
+## 12. Cierre
+
+La idea final del proyecto es sencilla.
+
+```text
+datos juridicos publicos
+-> SQLite
+-> EDA
+-> Pipeline con TF-IDF
+-> GridSearchCV con 5 folds en train
+-> SVM como mejor modelo final en test
+-> LogReg como modelo auditado
+-> retrieval de precedentes
+-> revision de errores y XAI
+```
+
+El sistema es una ayuda para priorizar lectura. No sustituye el criterio juridico.
